@@ -2,8 +2,10 @@ import time
 from typing import Dict, Any, Optional, Tuple, List
 import numpy as np
 import pandas as pd
-from scipy.spatial import Delaunay
-from shapely.geometry import MultiPoint, Polygon
+try:
+    from shapely.geometry import MultiPoint, Polygon
+except Exception:
+    MultiPoint, Polygon = None, None
 
 def generate_tin_surface(
     points_df: pd.DataFrame,

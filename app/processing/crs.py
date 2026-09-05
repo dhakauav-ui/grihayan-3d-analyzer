@@ -1,5 +1,8 @@
 from typing import Optional, List, Dict
-import pyproj
+try:
+    import pyproj
+except Exception:
+    pyproj = None
 from app.models.survey import CRSDetails
 
 COMMON_CRS_PRESETS = [
