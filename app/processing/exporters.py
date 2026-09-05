@@ -5,10 +5,25 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import numpy as np
 import pandas as pd
-import rasterio
-from rasterio.transform import from_origin
-import geopandas as gpd
-from fpdf import FPDF
+try:
+    import rasterio
+    from rasterio.transform import from_origin
+except Exception:
+    rasterio = None
+    from_origin = None
+
+try:
+    import geopandas as gpd
+except Exception:
+    gpd = None
+
+try:
+    from fpdf import FPDF
+except Exception:
+    try:
+        from fpdf2 import FPDF
+    except Exception:
+        FPDF = None
 
 def export_cleaned_csv(points_df: pd.DataFrame, output_path: Path) -> Path:
     """
