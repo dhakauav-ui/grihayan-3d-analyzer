@@ -1,4 +1,6 @@
 import os
+import math
+import json
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -14,10 +16,39 @@ from app.api.contours import router as contours_router
 from app.api.exports import router as exports_router
 from app.api.analysis import router as analysis_router
 
+def sanitize_floats(obj):
+    """Recursively cleans NaN and Inf values to comply with strict JSON standards."""
+    if isinstance(obj, dict):
+        return {k: sanitize_floats(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_floats(v) for v in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return 0.0
+        return obj
+    elif hasattr(obj, 'item'):
+        val = obj.item()
+        if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+            return 0.0
+        return val
+    return obj
+
+class SafeJSONResponse(JSONResponse):
+    def render(self, content) -> bytes:
+        clean_content = sanitize_floats(content)
+        return json.dumps(
+            clean_content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(',', ':')
+        ).encode('utf-8')
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Professional Survey GIS and 3D Surface Analysis Engine"
+    description="Professional Survey GIS and 3D Surface Analysis Engine",
+    default_response_class=SafeJSONResponse
 )
 
 # CORS middleware
