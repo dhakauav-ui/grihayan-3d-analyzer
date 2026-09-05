@@ -2,6 +2,7 @@ import time
 from typing import Dict, Any, Optional, Tuple, List
 import numpy as np
 import pandas as pd
+from scipy.spatial import Delaunay
 try:
     from shapely.geometry import MultiPoint, Polygon
 except Exception:
