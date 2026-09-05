@@ -1,13 +1,24 @@
+import tempfile
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
-UPLOAD_DIR = BASE_DIR / "data" / "uploads"
-PROJECTS_DIR = BASE_DIR / "projects"
-EXPORTS_DIR = BASE_DIR / "exports"
+# Base directory for the standalone deployment package
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    UPLOAD_DIR = BASE_DIR / "data" / "uploads"
+    PROJECTS_DIR = BASE_DIR / "projects"
+    EXPORTS_DIR = BASE_DIR / "exports"
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    temp_base = Path(tempfile.gettempdir()) / "grihayan_analyzer"
+    UPLOAD_DIR = temp_base / "uploads"
+    PROJECTS_DIR = temp_base / "projects"
+    EXPORTS_DIR = temp_base / "exports"
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 class Settings:
     PROJECT_NAME: str = "GRIHAYAN 3D SURFACE ANALYZER"
