@@ -2,9 +2,10 @@ import io
 import json
 import zipfile
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import numpy as np
 import pandas as pd
+
 try:
     import rasterio
     from rasterio.transform import from_origin
@@ -39,6 +40,64 @@ def export_cleaned_csv(points_df: pd.DataFrame, output_path: Path) -> Path:
     }
     export_df = points_df[cols].rename(columns=rename_dict)
     export_df.to_csv(output_path, index=False, float_format="%.4f")
+    return output_path
+
+def export_cleaned_excel(
+    points_df: pd.DataFrame,
+    stats: Optional[Dict[str, Any]],
+    crs_code: Optional[str],
+    project_name: str,
+    output_path: Path
+) -> Path:
+    """
+    Exports a professional multi-sheet Excel (.xlsx) workbook with:
+    - Sheet 1: 'Survey_Points' (Formatted table with precision coordinates)
+    - Sheet 2: 'Project_Summary' (Statistical & Geodetic QA/QC metrics)
+    """
+    cols = [c for c in ["point_id", "x", "y", "rl", "code"] if c in points_df.columns]
+    rename_dict = {
+        "point_id": "Point_ID",
+        "x": "Easting_X (m)",
+        "y": "Northing_Y (m)",
+        "rl": "Elevation_RL (m)",
+        "code": "Feature_Code"
+    }
+    export_df = points_df[cols].rename(columns=rename_dict)
+
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        export_df.to_excel(writer, sheet_name="Survey_Points", index=False)
+
+        # Build Summary Sheet
+        summary_rows = [
+            {"Parameter": "Project Name", "Value": str(project_name)},
+            {"Parameter": "Coordinate Reference System (CRS)", "Value": str(crs_code or "Local Survey Grid")},
+            {"Parameter": "Vertical Datum", "Value": "Local TBM / Site Benchmark"},
+            {"Parameter": "Total Valid Survey Points", "Value": len(points_df)},
+            {"Parameter": "Software Engine", "Value": "GRIHAYAN 3D SURFACE ANALYZER v1.0"},
+        ]
+
+        if stats:
+            elev = stats.get("elevation", {})
+            spatial = stats.get("spatial_area", {})
+            tin_st = stats.get("tin", {})
+            summary_rows.extend([
+                {"Parameter": "Minimum Elevation (RL)", "Value": f"{elev.get('min_rl', 0):.3f} m"},
+                {"Parameter": "Maximum Elevation (RL)", "Value": f"{elev.get('max_rl', 0):.3f} m"},
+                {"Parameter": "Elevation Relief (Delta Z)", "Value": f"{elev.get('range_rl', 0):.3f} m"},
+                {"Parameter": "Mean Elevation (RL)", "Value": f"{elev.get('mean_rl', 0):.3f} m"},
+                {"Parameter": "Standard Deviation (Sigma)", "Value": f"{elev.get('std_dev_rl', 0):.3f} m"},
+                {"Parameter": "2D Planar Area (Sq.m)", "Value": f"{spatial.get('area_2d_sqm', 0):,.2f} m2"},
+                {"Parameter": "2D Planar Area (Acres)", "Value": f"{spatial.get('area_acres', 0):,.3f} Acres"},
+                {"Parameter": "2D Planar Area (Hectares)", "Value": f"{spatial.get('area_hectares', 0):,.3f} Ha"},
+                {"Parameter": "3D Terrain Surface Area", "Value": f"{spatial.get('surface_area_3d_sqm', 0):,.2f} m2"},
+                {"Parameter": "3D Surface Rugosity Ratio", "Value": f"{spatial.get('surface_rugosity_ratio', 1.0):.4f}x"},
+                {"Parameter": "Boundary Perimeter", "Value": f"{spatial.get('perimeter_m', 0):,.2f} m"},
+                {"Parameter": "Delaunay TIN Triangles", "Value": tin_st.get("triangle_count", len(points_df)*2)},
+            ])
+
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df.to_excel(writer, sheet_name="Project_Summary", index=False)
+
     return output_path
 
 def export_points_geojson(points_df: pd.DataFrame, crs_code: Optional[str], output_path: Path) -> Path:
@@ -90,23 +149,36 @@ def export_dem_geotiff(
     rows, cols = dem_array.shape
     filled = np.nan_to_num(dem_array, nan=nodata_val).astype(np.float32)
 
-    transform = from_origin(min_x, max_y, res_x, res_y)
-    crs_str = crs_code if (crs_code and crs_code.upper() != "LOCAL") else "EPSG:32646"
+    if rasterio and from_origin:
+        transform = from_origin(min_x, max_y, res_x, res_y)
+        crs_str = crs_code if (crs_code and crs_code.upper() != "LOCAL") else "EPSG:32646"
 
-    with rasterio.open(
-        output_path,
-        "w",
-        driver="GTiff",
-        height=rows,
-        width=cols,
-        count=1,
-        dtype=rasterio.float32,
-        crs=crs_str,
-        transform=transform,
-        nodata=nodata_val,
-        compress="lzw"
-    ) as dst:
-        dst.write(filled, 1)
+        with rasterio.open(
+            output_path,
+            "w",
+            driver="GTiff",
+            height=rows,
+            width=cols,
+            count=1,
+            dtype=rasterio.float32,
+            crs=crs_str,
+            transform=transform,
+            nodata=nodata_val,
+            compress="lzw"
+        ) as dst:
+            dst.write(filled, 1)
+    else:
+        # Fallback to Arc/Info ASCII Grid
+        asc_path = output_path.with_suffix(".asc")
+        with open(asc_path, "w", encoding="utf-8") as f:
+            f.write(f"ncols {cols}\n")
+            f.write(f"nrows {rows}\n")
+            f.write(f"xllcorner {min_x:.4f}\n")
+            f.write(f"yllcorner {(max_y - rows * res_y):.4f}\n")
+            f.write(f"cellsize {res_x:.4f}\n")
+            f.write(f"NODATA_value {nodata_val}\n")
+            np.savetxt(f, filled, fmt="%.3f")
+        return asc_path
 
     return output_path
 
@@ -114,30 +186,35 @@ def export_contours_shapefile(geojson_data: Dict[str, Any], crs_code: Optional[s
     """
     Exports contour vector polylines into an ESRI Shapefile archive (.zip).
     """
-    if not geojson_data or not geojson_data.get("features"):
-        gdf = gpd.GeoDataFrame(columns=["elevation", "is_major", "geometry"], geometry="geometry")
+    if gpd is not None:
+        if not geojson_data or not geojson_data.get("features"):
+            gdf = gpd.GeoDataFrame(columns=["elevation", "is_major", "geometry"], geometry="geometry")
+        else:
+            gdf = gpd.GeoDataFrame.from_features(geojson_data["features"])
+
+        crs_str = crs_code if (crs_code and crs_code.upper() != "LOCAL") else "EPSG:32646"
+        try:
+            gdf.set_crs(crs_str, inplace=True, allow_override=True)
+        except Exception:
+            pass
+
+        temp_dir = output_zip_path.parent / (output_zip_path.stem + "_shp")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        shp_path = temp_dir / "contours.shp"
+
+        gdf.to_file(shp_path, driver="ESRI Shapefile")
+
+        with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for f in temp_dir.glob("contours.*"):
+                zipf.write(f, arcname=f.name)
+                f.unlink()
+        
+        if temp_dir.exists():
+            temp_dir.rmdir()
     else:
-        gdf = gpd.GeoDataFrame.from_features(geojson_data["features"])
-
-    crs_str = crs_code if (crs_code and crs_code.upper() != "LOCAL") else "EPSG:32646"
-    try:
-        gdf.set_crs(crs_str, inplace=True, allow_override=True)
-    except Exception:
-        pass
-
-    temp_dir = output_zip_path.parent / (output_zip_path.stem + "_shp")
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    shp_path = temp_dir / "contours.shp"
-
-    gdf.to_file(shp_path, driver="ESRI Shapefile")
-
-    with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for f in temp_dir.glob("contours.*"):
-            zipf.write(f, arcname=f.name)
-            f.unlink()
-    
-    if temp_dir.exists():
-        temp_dir.rmdir()
+        # Fallback zip with GeoJSON
+        with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.writestr("contours.geojson", json.dumps(geojson_data, indent=2))
 
     return output_zip_path
 
@@ -155,11 +232,12 @@ def export_tin_obj(tin_data: Dict[str, Any], output_path: Path) -> Path:
     """
     vertices = tin_data["geometry"]["vertices"]
     indices = tin_data["geometry"]["indices"]
-    center = tin_data["center"]
+    center = tin_data.get("center", {"x": 0.0, "y": 0.0, "z": 0.0})
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("# GRIHAYAN 3D SURFACE ANALYZER - TIN 3D Mesh Export\n")
         f.write(f"# Triangles: {len(indices) // 3}, Vertices: {len(vertices) // 3}\n\n")
+        f.write("g TIN_SURFACE\n\n")
 
         for i in range(0, len(vertices), 3):
             vx = vertices[i] + center["x"]
@@ -227,11 +305,11 @@ def export_pdf_summary_report(
     pdf.ln(3)
 
     # --- 1. Top 4 Executive KPI Metric Cards (Graphic Scorecards) ---
-    elev = stats.get("elevation", {})
-    spatial = stats.get("spatial_area", {})
-    tin_st = stats.get("tin", {})
+    elev = stats.get("elevation", {}) if stats else {}
+    spatial = stats.get("spatial_area", {}) if stats else {}
+    tin_st = stats.get("tin", {}) if stats else {}
     
-    valid_pts = validation.get("valid_points", validation.get("total_records", 0))
+    valid_pts = validation.get("valid_points", validation.get("total_records", 0)) if validation else 0
     area_sqm = spatial.get("area_2d_sqm", 0)
     area_ac = spatial.get("area_acres", round(area_sqm / 4046.856, 2))
     relief_z = elev.get("range_rl", 0)
@@ -286,8 +364,8 @@ def export_pdf_summary_report(
     meta_grid = [
         ("Project Name:", str(project_name), "Coordinate Reference System (CRS):", str(crs_code or "Local Survey Grid")),
         ("Survey Source File:", str(file_name), "Vertical Datum Reference:", "Local TBM / Site Benchmark"),
-        ("Units (Horizontal / Vertical):", "Meters (m) / Meters (m)", "Total Raw Records:", f"{validation.get('total_records', 0):,}"),
-        ("Duplicate Points Detected:", str(validation.get("duplicate_xy_count", 0)), "Valid Verified Topo Points:", f"{valid_pts:,}")
+        ("Units (Horizontal / Vertical):", "Meters (m) / Meters (m)", "Total Raw Records:", f"{validation.get('total_records', 0) if validation else 0:,}"),
+        ("Duplicate Points Detected:", str(validation.get("duplicate_xy_count", 0) if validation else 0), "Valid Verified Topo Points:", f"{valid_pts:,}")
     ]
 
     pdf.set_font("Helvetica", "", 8)
@@ -345,11 +423,11 @@ def export_pdf_summary_report(
         bx = chart_x + 10 + b * bar_width
         by = chart_y + chart_h - 6 - b_height
 
-        # Gradient color logic (Blue -> Emerald -> Amber -> Red)
-        t = b / (num_bins - 1)
-        r_col = int(37 + t * 180)
-        g_col = int(99 + (1 - abs(t - 0.5) * 2) * 80)
-        b_col = int(235 * (1 - t) + 40)
+        # Safe RGB Gradient color logic with clamping [0, 255]
+        t = b / max(1, (num_bins - 1))
+        r_col = min(255, max(0, int(37 + t * 180)))
+        g_col = min(255, max(0, int(99 + (1 - abs(t - 0.5) * 2) * 80)))
+        b_col = min(255, max(0, int(235 * (1 - t) + 20)))
 
         pdf.set_fill_color(r_col, g_col, b_col)
         pdf.rect(bx + 1.5, by, bar_width - 3, b_height, 'F')
@@ -408,7 +486,7 @@ def export_pdf_summary_report(
     pdf.cell(0, 6, " 4. GEODETIC BOUNDING FRAME & QA/QC CERTIFICATION", new_x="LMARGIN", new_y="NEXT", fill=True)
     pdf.ln(2)
 
-    horiz = stats.get("horizontal", {})
+    horiz = stats.get("horizontal", {}) if stats else {}
     min_x = horiz.get("min_x", 0)
     max_x = horiz.get("max_x", 100)
     min_y = horiz.get("min_y", 0)
@@ -535,41 +613,108 @@ def export_contours_dxf(
 
     return output_path
 
+def export_points_dxf(
+    points_df: pd.DataFrame,
+    output_path: Path,
+    include_labels: bool = True
+) -> Path:
+    """
+    Exports 3D survey points to AutoCAD DXF with 3 distinct CAD layers:
+    - SURVEY_POINTS (POINT entities at 3D X, Y, RL)
+    - POINT_ELEVATIONS (TEXT entity with elevation label)
+    - POINT_IDS (TEXT entity with point ID & code)
+    """
+    with open(output_path, "w", encoding="utf-8") as f:
+        # DXF Header
+        f.write("0\nSECTION\n2\nHEADER\n")
+        f.write("9\n$ACADVER\n1\nAC1024\n") # AutoCAD 2010/2018
+        f.write("9\n$INSUNITS\n70\n6\n") # Meters
+        f.write("0\nENDSEC\n")
+
+        # Layers
+        f.write("0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n3\n")
+        f.write("0\nLAYER\n2\nSURVEY_POINTS\n70\n0\n62\n3\n6\nCONTINUOUS\n")     # Green
+        f.write("0\nLAYER\n2\nPOINT_ELEVATIONS\n70\n0\n62\n1\n6\nCONTINUOUS\n")  # Red
+        f.write("0\nLAYER\n2\nPOINT_IDS\n70\n0\n62\n5\n6\nCONTINUOUS\n")         # Blue
+        f.write("0\nENDTAB\n0\nENDSEC\n")
+
+        # Blocks
+        f.write("0\nSECTION\n2\nBLOCKS\n0\nENDSEC\n")
+
+        # Entities
+        f.write("0\nSECTION\n2\nENTITIES\n")
+
+        # Subsample labels if dataset is huge (>50,000 points) to prevent CAD crashing
+        total_p = len(points_df)
+        label_step = max(1, int(np.ceil(total_p / 10000))) if include_labels else 9999999
+
+        for idx, row in points_df.iterrows():
+            px = float(row["x"])
+            py = float(row["y"])
+            pz = float(row["rl"])
+            pid = str(row.get("point_id", idx + 1))
+            pcode = str(row.get("code", "")) if row.get("code") else ""
+
+            # 3D Point entity
+            f.write(f"0\nPOINT\n8\nSURVEY_POINTS\n10\n{px:.4f}\n20\n{py:.4f}\n30\n{pz:.4f}\n")
+
+            # Text labels
+            if include_labels and (idx % label_step == 0):
+                # Elevation Text
+                f.write(f"0\nTEXT\n8\nPOINT_ELEVATIONS\n10\n{(px + 0.3):.4f}\n20\n{(py + 0.3):.4f}\n30\n{pz:.4f}\n40\n0.8\n1\n{pz:.2f}\n")
+                # Point ID & Code Text
+                id_label = f"{pid} [{pcode}]" if pcode else pid
+                f.write(f"0\nTEXT\n8\nPOINT_IDS\n10\n{(px + 0.3):.4f}\n20\n{(py - 0.7):.4f}\n30\n{pz:.4f}\n40\n0.7\n1\n{id_label}\n")
+
+        f.write("0\nENDSEC\n0\nEOF\n")
+
+    return output_path
+
 def export_cad_dwg_dxf_zip(
     major_contours: list,
     minor_contours: list,
+    points_df: Optional[pd.DataFrame],
     output_zip_path: Path,
     include_labels: bool = True
 ) -> Path:
     """
-    Exports 3D topographic contours and labels into a CAD Zip package containing:
-    - contours_AutoCAD_R2018.dxf
-    - contours_AutoCAD_R2010.dxf
-    - README_CAD_DWG.txt
+    Exports complete AutoCAD CAD engineering package (.zip) containing:
+    - contours_3D_AutoCAD_R2018.dxf (3D Contour vectors & index labels)
+    - survey_points_3D_AutoCAD.dxf (3D Survey Points & RL tags)
+    - contours_AutoCAD_R2010.dxf (Legacy contour compatibility)
+    - README_CAD_DWG.txt (Engineering import guide for Civil 3D & AutoCAD)
     """
     temp_dir = output_zip_path.parent / (output_zip_path.stem + "_cad_temp")
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    dxf_2018 = temp_dir / "contours_AutoCAD_R2018.dxf"
-    export_contours_dxf(major_contours, minor_contours, dxf_2018, include_labels=include_labels)
+    dxf_cont_2018 = temp_dir / "contours_3D_AutoCAD_R2018.dxf"
+    export_contours_dxf(major_contours, minor_contours, dxf_cont_2018, include_labels=include_labels)
 
-    dxf_2010 = temp_dir / "contours_AutoCAD_R2010.dxf"
-    export_contours_dxf(major_contours, minor_contours, dxf_2010, include_labels=include_labels)
+    dxf_cont_2010 = temp_dir / "contours_AutoCAD_R2010.dxf"
+    export_contours_dxf(major_contours, minor_contours, dxf_cont_2010, include_labels=include_labels)
+
+    if points_df is not None and not points_df.empty:
+        dxf_pts = temp_dir / "survey_points_3D_AutoCAD.dxf"
+        export_points_dxf(points_df, dxf_pts, include_labels=include_labels)
 
     readme = temp_dir / "README_CAD_DWG.txt"
     with open(readme, "w", encoding="utf-8") as f:
         f.write("========================================================================\n")
-        f.write(" GRIHAYAN 3D SURFACE ANALYZER - AUTOCAD (DWG / DXF) CONTOUR EXPORT\n")
+        f.write(" GRIHAYAN 3D SURFACE ANALYZER - AUTOCAD (DWG / DXF) ENGINEERING PACKAGE\n")
         f.write("========================================================================\n\n")
         f.write("FILES INCLUDED IN THIS PACKAGE:\n")
-        f.write("1. contours_AutoCAD_R2018.dxf : Native 3D Contours for AutoCAD 2018-2026 / Civil 3D\n")
-        f.write("2. contours_AutoCAD_R2010.dxf : Legacy 3D Contours for AutoCAD 2010-2017\n\n")
+        f.write("1. contours_3D_AutoCAD_R2018.dxf : Native 3D Contours for AutoCAD 2018-2026 / Civil 3D\n")
+        f.write("2. survey_points_3D_AutoCAD.dxf   : Native 3D Points, RL Badges & Point IDs\n")
+        f.write("3. contours_AutoCAD_R2010.dxf    : Legacy 3D Contours for AutoCAD 2010-2017\n\n")
         f.write("HOW TO OPEN IN AUTOCAD / CIVIL 3D AS .DWG:\n")
         f.write("- Double-click or open either .dxf file directly in AutoCAD or Civil 3D.\n")
-        f.write("- All contours are generated on distinct layers with 3D elevations:\n")
-        f.write("    * CONTOUR_MAJOR  (White / Index Contours)\n")
-        f.write("    * CONTOUR_MINOR  (Cyan / Intermediate Contours)\n")
-        f.write("    * CONTOUR_LABELS (Magenta / Elevation RL Badges)\n")
+        f.write("- All contours and survey points are generated on distinct layers with 3D elevations:\n")
+        f.write("    * CONTOUR_MAJOR     (White / Index Contours)\n")
+        f.write("    * CONTOUR_MINOR     (Cyan / Intermediate Contours)\n")
+        f.write("    * CONTOUR_LABELS    (Magenta / Elevation RL Badges)\n")
+        f.write("    * SURVEY_POINTS     (Green / 3D Points)\n")
+        f.write("    * POINT_ELEVATIONS  (Red / RL Text Tags)\n")
+        f.write("    * POINT_IDS         (Blue / Point Numbers & Codes)\n")
         f.write("- In AutoCAD, simply press 'Ctrl + S' or 'Save As' -> Select 'AutoCAD Drawing (*.dwg)' to save as a native .DWG file.\n")
 
     with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
@@ -582,5 +727,6 @@ def export_cad_dwg_dxf_zip(
         temp_dir.rmdir()
 
     return output_zip_path
+
 
 
