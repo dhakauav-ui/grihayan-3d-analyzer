@@ -47,7 +47,8 @@ def export_cleaned_excel(
     stats: Optional[Dict[str, Any]],
     crs_code: Optional[str],
     project_name: str,
-    output_path: Path
+    output_path: Path,
+    vertical_datum: Optional[str] = "Local TBM"
 ) -> Path:
     """
     Exports a professional multi-sheet Excel (.xlsx) workbook with:
@@ -71,10 +72,11 @@ def export_cleaned_excel(
         summary_rows = [
             {"Parameter": "Project Name", "Value": str(project_name)},
             {"Parameter": "Coordinate Reference System (CRS)", "Value": str(crs_code or "Local Survey Grid")},
-            {"Parameter": "Vertical Datum", "Value": "Local TBM / Site Benchmark"},
+            {"Parameter": "Vertical Datum Reference", "Value": str(vertical_datum or "Local TBM")},
             {"Parameter": "Total Valid Survey Points", "Value": len(points_df)},
             {"Parameter": "Software Engine", "Value": "GRIHAYAN 3D SURFACE ANALYZER v1.0"},
         ]
+
 
         if stats:
             elev = stats.get("elevation", {})
@@ -285,7 +287,8 @@ def export_pdf_summary_report(
     crs_code: str,
     stats: Dict[str, Any],
     validation: Dict[str, Any],
-    output_path: Path
+    output_path: Path,
+    vertical_datum: Optional[str] = "Local TBM"
 ) -> Path:
     """
     Generates a world-class, visual Executive Land Survey & Topographic PDF report with embedded graphical charts.
@@ -363,10 +366,11 @@ def export_pdf_summary_report(
 
     meta_grid = [
         ("Project Name:", str(project_name), "Coordinate Reference System (CRS):", str(crs_code or "Local Survey Grid")),
-        ("Survey Source File:", str(file_name), "Vertical Datum Reference:", "Local TBM / Site Benchmark"),
+        ("Survey Source File:", str(file_name), "Vertical Datum Reference:", str(vertical_datum or "Local TBM")),
         ("Units (Horizontal / Vertical):", "Meters (m) / Meters (m)", "Total Raw Records:", f"{validation.get('total_records', 0) if validation else 0:,}"),
         ("Duplicate Points Detected:", str(validation.get("duplicate_xy_count", 0) if validation else 0), "Valid Verified Topo Points:", f"{valid_pts:,}")
     ]
+
 
     pdf.set_font("Helvetica", "", 8)
     for c1_lbl, c1_v, c2_lbl, c2_v in meta_grid:
@@ -675,7 +679,9 @@ def export_cad_dwg_dxf_zip(
     minor_contours: list,
     points_df: Optional[pd.DataFrame],
     output_zip_path: Path,
-    include_labels: bool = True
+    include_labels: bool = True,
+    crs_code: Optional[str] = None,
+    vertical_datum: Optional[str] = "Local TBM"
 ) -> Path:
     """
     Exports complete AutoCAD CAD engineering package (.zip) containing:
@@ -702,6 +708,8 @@ def export_cad_dwg_dxf_zip(
         f.write("========================================================================\n")
         f.write(" GRIHAYAN 3D SURFACE ANALYZER - AUTOCAD (DWG / DXF) ENGINEERING PACKAGE\n")
         f.write("========================================================================\n\n")
+        f.write(f"Coordinate Reference System (CRS) : {crs_code or 'Local Survey Grid'}\n")
+        f.write(f"Vertical Datum Reference          : {vertical_datum or 'Local TBM'}\n\n")
         f.write("FILES INCLUDED IN THIS PACKAGE:\n")
         f.write("1. contours_3D_AutoCAD_R2018.dxf : Native 3D Contours for AutoCAD 2018-2026 / Civil 3D\n")
         f.write("2. survey_points_3D_AutoCAD.dxf   : Native 3D Points, RL Badges & Point IDs\n")
@@ -727,6 +735,7 @@ def export_cad_dwg_dxf_zip(
         temp_dir.rmdir()
 
     return output_zip_path
+
 
 
 

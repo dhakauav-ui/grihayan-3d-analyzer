@@ -2,10 +2,7 @@ import io
 import base64
 from typing import Dict, Any, Tuple
 import numpy as np
-try:
-    from PIL import Image
-except Exception:
-    Image = None
+from PIL import Image
 
 def calculate_hillshade_and_slope(
     dem_array: np.ndarray,

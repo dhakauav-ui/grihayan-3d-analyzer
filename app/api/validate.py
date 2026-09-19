@@ -29,7 +29,8 @@ async def validate_survey_data(req: ValidateRequest):
         summary, _ = validate_survey_dataframe(
             df=df,
             mapping=req.column_mapping,
-            source_crs=req.source_crs
+            source_crs=req.source_crs,
+            vertical_datum=req.vertical_datum
         )
         return summary
     except Exception as e:
@@ -37,3 +38,4 @@ async def validate_survey_data(req: ValidateRequest):
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Validation failed: {str(e)}"
         )
+

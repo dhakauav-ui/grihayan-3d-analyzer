@@ -41,8 +41,10 @@ async def generate_surface_model(req: GenerateSurfaceRequest):
         summary, cleaned_df = validate_survey_dataframe(
             df=df,
             mapping=req.column_mapping,
-            source_crs=req.source_crs
+            source_crs=req.source_crs,
+            vertical_datum=req.vertical_datum
         )
+
 
         if len(cleaned_df) < 3:
             raise HTTPException(

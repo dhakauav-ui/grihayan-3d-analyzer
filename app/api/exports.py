@@ -31,6 +31,7 @@ class ExportRequest(BaseModel):
     file_id: str
     column_mapping: ColumnMapping
     source_crs: Optional[str] = None
+    vertical_datum: Optional[str] = "Local TBM"
     project_name: Optional[str] = "Survey_Project"
     format: str # "csv", "excel", "geojson_points", "dxf_points", "geotiff", "shapefile", "geojson_contours", "cad_dwg", "obj", "pdf"
     resolution: float = 1.0
@@ -50,7 +51,12 @@ async def export_gis_data(req: ExportRequest):
 
     try:
         df, _, _ = read_survey_file(file_path)
-        summary, cleaned_df = validate_survey_dataframe(df, req.column_mapping, req.source_crs)
+        summary, cleaned_df = validate_survey_dataframe(
+            df,
+            req.column_mapping,
+            req.source_crs,
+            vertical_datum=req.vertical_datum
+        )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -68,7 +74,14 @@ async def export_gis_data(req: ExportRequest):
         tin_res = generate_tin_surface(cleaned_df)
         stats_res = calculate_project_statistics(cleaned_df, summary.total_records, summary.invalid_records, tin_res.get("metrics"))
         out_file = export_dir / f"{project_slug}_Survey_Data.xlsx"
-        export_cleaned_excel(cleaned_df, stats_res, req.source_crs, req.project_name or "Survey Project", out_file)
+        export_cleaned_excel(
+            cleaned_df,
+            stats_res,
+            req.source_crs,
+            req.project_name or "Survey Project",
+            out_file,
+            vertical_datum=req.vertical_datum
+        )
         return FileResponse(out_file, filename=out_file.name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     elif fmt in ["geojson_points", "points_geojson"]:
@@ -140,7 +153,9 @@ async def export_gis_data(req: ExportRequest):
             minor_contours=cont_res.get("minor_contours", []),
             points_df=cleaned_df,
             output_zip_path=out_file,
-            include_labels=True
+            include_labels=True,
+            crs_code=req.source_crs,
+            vertical_datum=req.vertical_datum
         )
         return FileResponse(out_file, filename=out_file.name, media_type="application/zip")
 
@@ -160,7 +175,8 @@ async def export_gis_data(req: ExportRequest):
             crs_code=req.source_crs or "Local Grid",
             stats=stats_res,
             validation=summary.model_dump(),
-            output_path=out_file
+            output_path=out_file,
+            vertical_datum=req.vertical_datum
         )
         return FileResponse(out_file, filename=out_file.name, media_type="application/pdf")
 
@@ -169,4 +185,5 @@ async def export_gis_data(req: ExportRequest):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported export format '{fmt}'. Supported: csv, excel, geotiff, shapefile, geojson_contours, geojson_points, cad_dwg, obj, pdf"
         )
+
 

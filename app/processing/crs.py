@@ -1,8 +1,5 @@
 from typing import Optional, List, Dict
-try:
-    import pyproj
-except Exception:
-    pyproj = None
+import pyproj
 from app.models.survey import CRSDetails
 
 COMMON_CRS_PRESETS = [
@@ -23,11 +20,14 @@ def analyze_and_verify_crs(
     min_x: float,
     max_x: float,
     min_y: float,
-    max_y: float
+    max_y: float,
+    vertical_datum: Optional[str] = "Local TBM"
 ) -> CRSDetails:
     """
     Validates CRS input against coordinate bounds and pyproj registry.
     """
+    datum_val = vertical_datum or "Local TBM"
+
     if not crs_input or crs_input.strip().upper() in ("AUTO", "NONE", "UNKNOWN", ""):
         # Check if coordinates look like UTM or Geographic
         is_geographic = (-180.0 <= min_x <= 180.0) and (-90.0 <= max_y <= 90.0)
@@ -38,7 +38,8 @@ def analyze_and_verify_crs(
             name="Unconfirmed / Local Grid",
             is_projected=not is_geographic,
             unit="degree" if is_geographic else "meter",
-            datum=None,
+            datum=datum_val,
+            vertical_datum=datum_val,
             status="UNCONFIRMED",
             warning=warning
         )
@@ -49,7 +50,8 @@ def analyze_and_verify_crs(
             name="Local Survey Coordinate System",
             is_projected=True,
             unit="meter",
-            datum="Local TBM",
+            datum=datum_val,
+            vertical_datum=datum_val,
             status="LOCAL_GRID",
             warning="Data uses a local engineering reference grid."
         )
@@ -78,7 +80,8 @@ def analyze_and_verify_crs(
             name=crs_name,
             is_projected=is_projected,
             unit=unit_name,
-            datum=datum_name,
+            datum=datum_val or datum_name,
+            vertical_datum=datum_val,
             status="CONFIRMED",
             warning=warning
         )
@@ -88,7 +91,9 @@ def analyze_and_verify_crs(
             name="Custom / Unverified CRS",
             is_projected=True,
             unit="meter",
-            datum=None,
+            datum=datum_val,
+            vertical_datum=datum_val,
             status="UNCONFIRMED",
             warning=f"CRS '{clean_code}' could not be resolved by PROJ registry ({str(e)}). Processing will continue in local coordinates."
         )
+

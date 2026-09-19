@@ -14,7 +14,8 @@ from app.core.errors import InsufficientPointsException
 def validate_survey_dataframe(
     df: pd.DataFrame,
     mapping: ColumnMapping,
-    source_crs: Optional[str] = None
+    source_crs: Optional[str] = None,
+    vertical_datum: Optional[str] = "Local TBM"
 ) -> Tuple[ValidationSummary, pd.DataFrame]:
     """
     Performs high-performance validation on survey dataframe without modifying survey values.
@@ -157,7 +158,7 @@ def validate_survey_dataframe(
         min_x, max_x, min_y, max_y = 0.0, 0.0, 0.0, 0.0
 
     # CRS Analysis
-    crs_info = analyze_and_verify_crs(source_crs, min_x, max_x, min_y, max_y)
+    crs_info = analyze_and_verify_crs(source_crs, min_x, max_x, min_y, max_y, vertical_datum=vertical_datum)
 
     # Preview rows (first 50 valid and invalid)
     preview_valid = []
@@ -183,9 +184,11 @@ def validate_survey_dataframe(
         duplicate_id_count=duplicate_id_count,
         bounds=bounds,
         crs=crs_info,
+        vertical_datum=vertical_datum or "Local TBM",
         issues=issues[:200],
         preview_valid_rows=preview_valid,
         preview_invalid_rows=preview_invalid
     )
 
     return summary, cleaned_valid_df
+

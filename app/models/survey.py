@@ -46,6 +46,7 @@ class CRSDetails(BaseModel):
     is_projected: Optional[bool] = None
     unit: str = "meter"
     datum: Optional[str] = None
+    vertical_datum: Optional[str] = "Local TBM"
     status: str  # "CONFIRMED", "UNCONFIRMED", "LOCAL_GRID"
     warning: Optional[str] = None
 
@@ -58,6 +59,7 @@ class ValidationSummary(BaseModel):
     duplicate_id_count: int
     bounds: Optional[SurveyBounds] = None
     crs: CRSDetails
+    vertical_datum: Optional[str] = "Local TBM"
     issues: list[ValidationIssue]
     preview_valid_rows: list[dict[str, Any]]
     preview_invalid_rows: list[dict[str, Any]]
@@ -82,6 +84,7 @@ class ProjectMetadata(BaseModel):
     source_crs: Optional[str]
     processing_crs: Optional[str]
     elevation_datum: str
+    vertical_datum: Optional[str] = "Local TBM"
     horizontal_unit: str
     vertical_unit: str
     column_mapping: ColumnMapping
@@ -90,3 +93,4 @@ class ProjectMetadata(BaseModel):
     rejected_point_count: int
     bounds: Optional[SurveyBounds] = None
     software_version: str = "1.0.0"
+
