@@ -22,6 +22,7 @@ from app.processing.exporters import (
     export_contours_dxf,
     export_cad_dwg_dxf_zip,
     export_tin_obj,
+    export_tin_stl,
     export_pdf_summary_report
 )
 
@@ -164,6 +165,12 @@ async def export_gis_data(req: ExportRequest):
         out_file = export_dir / f"{project_slug}_TIN_Mesh.obj"
         export_tin_obj(tin_res, out_file)
         return FileResponse(out_file, filename=out_file.name, media_type="text/plain")
+
+    elif fmt in ["stl", "3d_print", "3d_stl"]:
+        tin_res = generate_tin_surface(cleaned_df)
+        out_file = export_dir / f"{project_slug}_3D_Print.stl"
+        export_tin_stl(tin_res, out_file)
+        return FileResponse(out_file, filename=out_file.name, media_type="model/stl")
 
     elif fmt in ["pdf", "report"]:
         tin_res = generate_tin_surface(cleaned_df)

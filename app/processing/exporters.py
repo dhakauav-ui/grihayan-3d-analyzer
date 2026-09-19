@@ -228,24 +228,46 @@ def export_contours_geojson(geojson_data: Dict[str, Any], output_path: Path) -> 
         json.dump(geojson_data, f, indent=2)
     return output_path
 
-def export_tin_obj(tin_data: Dict[str, Any], output_path: Path) -> Path:
+def export_tin_obj(
+    tin_data: Dict[str, Any],
+    output_path: Path,
+    vertical_exaggeration: float = 1.0,
+    include_skirt: bool = False
+) -> Path:
     """
-    Exports TIN mesh into standard Wavefront 3D OBJ format.
+    Exports TIN mesh into standard Wavefront 3D OBJ format with vertical relief and optional geological skirt.
     """
     vertices = tin_data["geometry"]["vertices"]
     indices = tin_data["geometry"]["indices"]
     center = tin_data.get("center", {"x": 0.0, "y": 0.0, "z": 0.0})
+    raw_elevations = tin_data["geometry"].get("raw_elevations", [])
+    boundary_indices = tin_data["geometry"].get("boundary_indices", [])
+    bounds = tin_data.get("bounds", {"min_z": 0.0, "max_z": 100.0})
+
+    num_verts = len(vertices) // 3
+    min_z = bounds.get("min_z", 0.0)
+    max_z = bounds.get("max_z", 100.0)
+    datum_base_z = (min_z - center.get("z", 0.0) - (max_z - min_z) * 0.15 - 5.0) * vertical_exaggeration
 
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write("# GRIHAYAN 3D SURFACE ANALYZER - TIN 3D Mesh Export\n")
-        f.write(f"# Triangles: {len(indices) // 3}, Vertices: {len(vertices) // 3}\n\n")
+        f.write("# GRIHAYAN 3D SURFACE ANALYZER - TIN 3D Mesh Export (Wavefront OBJ)\n")
+        f.write(f"# Vertical Exaggeration: {vertical_exaggeration}x\n")
+        f.write(f"# Triangles: {len(indices) // 3}, Vertices: {num_verts}\n\n")
         f.write("g TIN_SURFACE\n\n")
 
-        for i in range(0, len(vertices), 3):
-            vx = vertices[i] + center["x"]
-            vy = vertices[i + 1] + center["y"]
-            vz = vertices[i + 2] + center["z"]
-            f.write(f"v {vx:.4f} {vy:.4f} {vz:.4f}\n")
+        for i in range(num_verts):
+            vx = vertices[i * 3 + 0] + center["x"]
+            vy = vertices[i * 3 + 1] + center["y"]
+            vz_local = vertices[i * 3 + 2]
+            vz = (vz_local * vertical_exaggeration) + center["z"]
+
+            # Simple elevation normalized color: Blue -> Red
+            t = max(0.0, min(1.0, (raw_elevations[i] - min_z) / (max_z - min_z or 1.0))) if i < len(raw_elevations) else 0.5
+            cr = t
+            cg = 1.0 - abs(t - 0.5) * 2.0
+            cb = 1.0 - t
+
+            f.write(f"v {vx:.4f} {vy:.4f} {vz:.4f} {cr:.4f} {cg:.4f} {cb:.4f}\n")
 
         f.write("\n")
         for i in range(0, len(indices), 3):
@@ -253,6 +275,106 @@ def export_tin_obj(tin_data: Dict[str, Any], output_path: Path) -> Path:
             i1 = indices[i + 1] + 1
             i2 = indices[i + 2] + 1
             f.write(f"f {i0} {i1} {i2}\n")
+
+        # Optional Geological Skirt
+        if include_skirt and boundary_indices and len(boundary_indices) > 2:
+            f.write("\n\ng GEOLOGICAL_DATUM_SKIRT\n\n")
+            num_b = len(boundary_indices)
+            skirt_offset = num_verts
+
+            for idx in boundary_indices:
+                bx = vertices[idx * 3 + 0] + center["x"]
+                by = vertices[idx * 3 + 1] + center["y"]
+                bz = (vertices[idx * 3 + 2] * vertical_exaggeration) + center["z"]
+                f.write(f"v {bx:.4f} {by:.4f} {bz:.4f} 0.1500 0.2000 0.3000\n")
+                f.write(f"v {bx:.4f} {by:.4f} {datum_base_z + center['z']:.4f} 0.1500 0.2000 0.3000\n")
+
+            for i in range(num_b):
+                next_i = (i + 1) % num_b
+                top_a = i * 2 + skirt_offset + 1
+                bot_a = i * 2 + 1 + skirt_offset + 1
+                top_b = next_i * 2 + skirt_offset + 1
+                bot_b = next_i * 2 + 1 + skirt_offset + 1
+                f.write(f"f {top_a} {bot_a} {top_b}\n")
+                f.write(f"f {top_b} {bot_a} {bot_b}\n")
+
+    return output_path
+
+def export_tin_stl(
+    tin_data: Dict[str, Any],
+    output_path: Path,
+    vertical_exaggeration: float = 1.0,
+    include_skirt: bool = True
+) -> Path:
+    """
+    Exports TIN mesh into standard ASCII STL format with vertical relief and base skirt for 3D Printing.
+    """
+    vertices = tin_data["geometry"]["vertices"]
+    indices = tin_data["geometry"]["indices"]
+    center = tin_data.get("center", {"x": 0.0, "y": 0.0, "z": 0.0})
+    boundary_indices = tin_data["geometry"].get("boundary_indices", [])
+    bounds = tin_data.get("bounds", {"min_z": 0.0, "max_z": 100.0})
+
+    min_z = bounds.get("min_z", 0.0)
+    max_z = bounds.get("max_z", 100.0)
+    datum_base_z = (min_z - center.get("z", 0.0) - (max_z - min_z) * 0.15 - 5.0) * vertical_exaggeration
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("solid GRIHAYAN_3D_SURFACE\n")
+
+        # Surface Triangles
+        for i in range(0, len(indices), 3):
+            i0, i1, i2 = indices[i], indices[i + 1], indices[i + 2]
+            p0 = [vertices[i0 * 3 + 0], vertices[i0 * 3 + 1], vertices[i0 * 3 + 2] * vertical_exaggeration]
+            p1 = [vertices[i1 * 3 + 0], vertices[i1 * 3 + 1], vertices[i1 * 3 + 2] * vertical_exaggeration]
+            p2 = [vertices[i2 * 3 + 0], vertices[i2 * 3 + 1], vertices[i2 * 3 + 2] * vertical_exaggeration]
+
+            # Normal
+            ax, ay, az = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+            bx, by, bz = p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]
+            nx, ny, nz = ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx
+            norm = (nx**2 + ny**2 + nz**2)**0.5
+            if norm > 0:
+                nx, ny, nz = nx / norm, ny / norm, nz / norm
+            else:
+                nx, ny, nz = 0.0, 0.0, 1.0
+
+            f.write(f"  facet normal {nx:.6e} {ny:.6e} {nz:.6e}\n")
+            f.write("    outer loop\n")
+            f.write(f"      vertex {p0[0]:.4f} {p0[1]:.4f} {p0[2]:.4f}\n")
+            f.write(f"      vertex {p1[0]:.4f} {p1[1]:.4f} {p1[2]:.4f}\n")
+            f.write(f"      vertex {p2[0]:.4f} {p2[1]:.4f} {p2[2]:.4f}\n")
+            f.write("    endloop\n")
+            f.write("  endfacet\n")
+
+        # Skirt Triangles
+        if include_skirt and boundary_indices and len(boundary_indices) > 2:
+            num_b = len(boundary_indices)
+            for i in range(num_b):
+                next_i = (i + 1) % num_b
+                iA = boundary_indices[i]
+                iB = boundary_indices[next_i]
+
+                topA = [vertices[iA * 3 + 0], vertices[iA * 3 + 1], vertices[iA * 3 + 2] * vertical_exaggeration]
+                botA = [vertices[iA * 3 + 0], vertices[iA * 3 + 1], datum_base_z]
+                topB = [vertices[iB * 3 + 0], vertices[iB * 3 + 1], vertices[iB * 3 + 2] * vertical_exaggeration]
+                botB = [vertices[iB * 3 + 0], vertices[iB * 3 + 1], datum_base_z]
+
+                # Face 1: topA, botA, topB
+                f.write("  facet normal 0.0 0.0 1.0\n    outer loop\n")
+                f.write(f"      vertex {topA[0]:.4f} {topA[1]:.4f} {topA[2]:.4f}\n")
+                f.write(f"      vertex {botA[0]:.4f} {botA[1]:.4f} {botA[2]:.4f}\n")
+                f.write(f"      vertex {topB[0]:.4f} {topB[1]:.4f} {topB[2]:.4f}\n")
+                f.write("    endloop\n  endfacet\n")
+
+                # Face 2: topB, botA, botB
+                f.write("  facet normal 0.0 0.0 1.0\n    outer loop\n")
+                f.write(f"      vertex {topB[0]:.4f} {topB[1]:.4f} {topB[2]:.4f}\n")
+                f.write(f"      vertex {botA[0]:.4f} {botA[1]:.4f} {botA[2]:.4f}\n")
+                f.write(f"      vertex {botB[0]:.4f} {botB[1]:.4f} {botB[2]:.4f}\n")
+                f.write("    endloop\n  endfacet\n")
+
+        f.write("endsolid GRIHAYAN_3D_SURFACE\n")
 
     return output_path
 
